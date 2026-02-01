@@ -114,15 +114,59 @@ const TaskNebula = () => {
             </div>
 
             {/* Add Task Footer */}
-            <div style={{ zIndex: 10, padding: '20px', display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px' }}>
+            <div style={{ zIndex: 10, padding: '20px', display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px', alignItems: 'center' }}>
                 <input
                     type="text"
-                    placeholder="New Mission Objective..."
+                    placeholder="New Mission Objective... (or use Mic)"
                     value={newTask}
                     onChange={(e) => setNewTask(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addTask()}
                     style={inputStyle}
                 />
+
+                {/* Voice Command Button */}
+                <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => {
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                        if (!SpeechRecognition) {
+                            alert("Voice features not supported in this browser. Try Chrome!");
+                            return;
+                        }
+
+                        const recognition = new SpeechRecognition();
+                        recognition.lang = 'en-US';
+                        recognition.start();
+
+                        recognition.onresult = (event) => {
+                            const transcript = event.results[0][0].transcript;
+                            setNewTask(transcript);
+                            setTimeout(() => addTask(), 500); // Auto-add after speaking
+                        };
+
+                        recognition.onerror = (event) => {
+                            console.error("Speech recognition error", event.error);
+                        };
+                    }}
+                    style={{
+                        background: 'rgba(255, 255, 255, 0.1)',
+                        border: '1px solid rgba(255, 255, 255, 0.3)',
+                        borderRadius: '50%',
+                        width: '50px',
+                        height: '50px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        fontSize: '1.5rem',
+                        color: '#00ffcc',
+                        boxShadow: '0 0 10px rgba(0, 255, 255, 0.3)'
+                    }}
+                >
+                    🎙️
+                </motion.button>
+
                 <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
