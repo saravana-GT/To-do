@@ -52,6 +52,12 @@ const TaskNebula = () => {
     const processCommandRef = React.useRef(null);
     const recognitionRef = React.useRef(null);
     const isBotSpeakingRef = React.useRef(false);
+    const isListeningRef = React.useRef(isListening);
+
+    // Sync isListening state to ref
+    useEffect(() => {
+        isListeningRef.current = isListening;
+    }, [isListening]);
 
     // Auto-Correct / Polish Text Utility
     const polishText = (text) => {
@@ -135,18 +141,10 @@ const TaskNebula = () => {
         processCommandRef.current = processCommand;
     }, [processCommand]);
 
-    // Text-to-Speech Helper with "Turn Taking" (Pauses Mic)
+    // Text-to-Speech Helper with "Soft Mute" (Keeps Mic Open but Ignores Input)
     const speak = (text) => {
-        // 1. Pause Listening (Stop the ear so we don't hear ourselves)
+        // 1. Mark as speaking so we ignore our own voice
         isBotSpeakingRef.current = true;
-        if (recognitionRef.current) {
-            try {
-                recognitionRef.current.abort(); // abort() stops immediately, stop() processes current buffer
-                console.log("Mic Paused for Speech 🛑");
-            } catch (e) {
-                console.log("Error pausing mic", e);
-            }
-        }
 
         const utterance = new SpeechSynthesisUtterance(text);
         const voices = window.speechSynthesis.getVoices();
@@ -155,20 +153,12 @@ const TaskNebula = () => {
         utterance.pitch = 1.0;
         utterance.rate = 1.0;
 
-        // 2. Resume Listening Argument
+        // 2. Unmute after speaking
         utterance.onend = () => {
-            console.log("Speech Finished. Resuming Mic... 🎤");
-            isBotSpeakingRef.current = false;
-
-            // Only restart if the "Master Switch" (isListening) is still ON
-            if (isListening && recognitionRef.current) {
-                try {
-                    recognitionRef.current.start();
-                    setStatusMessage("Listening...");
-                } catch (e) {
-                    console.log("Error restarting mic", e);
-                }
-            }
+            // Small delay to ensure we don't catch the tail of the echo
+            setTimeout(() => {
+                isBotSpeakingRef.current = false;
+            }, 500);
         };
 
         window.speechSynthesis.speak(utterance);
@@ -193,21 +183,19 @@ const TaskNebula = () => {
             recognitionRef.current = recognition;
 
             recognition.onstart = () => {
-                // Only update status if we aren't "restarting" silently
-                if (!isBotSpeakingRef.current) {
-                    if (conversationModeRef.current) setStatusMessage("Listening for next task...");
-                    else setStatusMessage("Listening for 'Hey DOM'...");
-                }
+                setStatusMessage("Listening... (Say 'Hey DOM')");
             };
 
             recognition.onresult = (event) => {
+                // If robot is speaking, IGNORE everything (Soft Mute)
+                if (isBotSpeakingRef.current) {
+                    console.log("Ignored input while speaking...");
+                    return;
+                }
+
                 const lastResultIndex = event.results.length - 1;
                 const transcript = event.results[lastResultIndex][0].transcript.toLowerCase().trim();
                 console.log("Heard:", transcript);
-
-                // If bot is mid-speech (rare race condition), ignore input
-                if (isBotSpeakingRef.current) return;
-
                 setStatusMessage(`Heard: "${transcript}"`);
 
                 const wakeWordRegex = /(hey|high|hi|hello)?\s*(dom|dumb|done|doom|don|dawn|damm)\b/i;
@@ -236,7 +224,6 @@ const TaskNebula = () => {
                     conversationTimeoutRef.current = setTimeout(() => {
                         conversationModeRef.current = false;
                         setStatusMessage("Standing By... (Say 'Hey DOM')");
-                        speak("Standing by.");
                     }, 8000);
                 }
             };
@@ -245,22 +232,17 @@ const TaskNebula = () => {
                 console.error("Wake word error", e);
                 if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
                     setIsListening(false);
-                    alert("Check Microphone Permission");
+                    // Don't alert repeatedly
                 }
             };
 
             recognition.onend = () => {
-                // Critical: Only restart if we are NOT intentionally pausing for speech
-                if (isBotSpeakingRef.current) {
-                    console.log("Mic stopped for speech (Intentional). Waiting for finish.");
-                    return;
-                }
-
-                console.log("Mic stopped unexpectedly. Restarting listener...");
-                if (isListening) {
+                console.log("Mic stopped. Restarting...");
+                // Always restart if Global "isListening" is true (using Ref)
+                if (isListeningRef.current) {
                     setTimeout(() => {
                         try { recognition.start(); } catch (e) { console.log("Restart fail", e); }
-                    }, 100);
+                    }, 200);
                 }
             };
 
