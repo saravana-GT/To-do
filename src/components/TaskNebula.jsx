@@ -200,7 +200,7 @@ const TaskNebula = () => {
                 console.log("Heard:", transcript);
                 setStatusMessage(`Heard: "${transcript}"`);
 
-                const wakeWordRegex = /(hey|high|hi|hello)?\s*(dom|dumb|done|doom|don|dawn|damm)\b/i;
+                const wakeWordRegex = /(hey|high|hi|hello)?\s*(dom|dumb|done|doom|don|dawn|damm|dome)\b/i;
                 const isWakeWord = wakeWordRegex.test(transcript);
 
                 // Allow "Implicit" commands if they start with strong verbs
@@ -212,8 +212,9 @@ const TaskNebula = () => {
                 if (isActive || isWakeWord || isActionCommand) {
                     let command = transcript;
 
-                    if (isWakeWord) {
-                        command = transcript.replace(wakeWordRegex, '').trim();
+                    // Always clean the wake word if it exists, even if we are already active
+                    if (wakeWordRegex.test(command)) {
+                        command = command.replace(wakeWordRegex, '').trim();
                     }
 
                     if (command.length > 0) {
@@ -465,7 +466,7 @@ const TaskNebula = () => {
                         if (!isListening) {
                             // Activate Conversation Mode immediately so they don't have to say "Hey DOM" first
                             conversationModeRef.current = true;
-                            speak("Sentry mode activated. Ready for commands.");
+                            speak("Hey prabuu..");
                             // Set a timeout to revert to "Wait for Wake Word" mode after 10s of silence
                             if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
                             conversationTimeoutRef.current = setTimeout(() => {
