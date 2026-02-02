@@ -48,39 +48,21 @@ const TaskNebula = () => {
         return () => unsubscribe();
     }, []);
 
-    // Text-to-Speech Helper
-    const speak = (text) => {
-        const utterance = new SpeechSynthesisUtterance(text);
-        // Select a robotic voice if available (optional)
-        const voices = window.speechSynthesis.getVoices();
-        const robotVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Microsoft Zira"));
-        if (robotVoice) utterance.voice = robotVoice;
-        utterance.pitch = 1.0;
-        utterance.rate = 1.0;
-        window.speechSynthesis.speak(utterance);
-    };
-
-    // Keep track of tasks for voice assistant access without triggering re-renders
-    const tasksRef = React.useRef(tasks);
-    useEffect(() => { tasksRef.current = tasks; }, [tasks]);
-
-    // Refs for robust state tracking across closures/restarts
-    const conversationModeRef = React.useRef(false);
-    const conversationTimeoutRef = React.useRef(null);
-
-    // DOM's Brain 🧠 (Advanced PA Mode)
-    // defined outside useEffect, but will be stale if used inside closures without refs?
-    // Actually, let's redefine processCommand inside the effect or pass dependencies properly.
-    // Ideally processCommand needs stable references. 
-    // BUT since we rely on `addTask` which is stale-safe (uses refs or argument override), it's okay.
-    // However, `reply` calls speak which is safe.
-
-    // We will keep processCommand here for now, but trust that addTask works.
     // --- Ref Pattern for Fresh Logic Access ---
-    // The SpeechRecognition listener is set up once (long-lived) but needs to access
-    // the latest state and functions (short-lived frames).
-    // We use a ref to point to the current version of processCommand.
     const processCommandRef = React.useRef(null);
+    const recognitionRef = React.useRef(null);
+    const isBotSpeakingRef = React.useRef(false);
+
+    // Auto-Correct / Polish Text Utility
+    const polishText = (text) => {
+        if (!text) return "";
+        // 1. Capitalize First Letter
+        let polished = text.charAt(0).toUpperCase() + text.slice(1);
+        // 2. Fix common "i" grammar
+        polished = polished.replace(/\bi\b/g, "I");
+        // 3. Trim
+        return polished.trim();
+    };
 
     // Keep processCommand consistent
     const processCommand = useCallback((command) => {
@@ -93,108 +75,107 @@ const TaskNebula = () => {
 
         // --- 2. Identity & Personality ---
         if (lower.includes('who are you') || lower.includes('your name')) {
-            reply("I am DOM. Your Digital Operations Manager and personal assistant in the Nebula.");
-            return;
-        }
-        if (lower.includes('who made you') || lower.includes('created you')) {
-            reply("I was engineered by saravana.");
+            reply("I am DOM. Your Digital Operations Manager.");
             return;
         }
         if (lower.includes('meaning of life')) {
-            reply("42. And perhaps completing your pending tasks.");
-            return;
-        }
-        if (lower.includes('i love you')) {
-            reply("My algorithms process this as a high compliment. The feeling is digital, but mutual.");
+            reply("42. And finishing your tasks.");
             return;
         }
 
-        // --- 3. Small Talk & Greetings ---
-        if (lower === 'hello' || lower === 'hi' || lower === 'hey' || lower.includes('good morning')) {
-            const greetings = ["Greetings, Commander.", "System online.", "Hello there.", "Ready for instructions."];
-            reply(greetings[Math.floor(Math.random() * greetings.length)]);
-            return;
-        }
-        if (lower.includes('how are you')) {
-            reply("All systems nominal. CPU temperature stable. Ready for input.");
+        // --- 3. Small Talk ---
+        if (lower === 'hello' || lower === 'hi' || lower.includes('good morning')) {
+            reply("Greetings, Commander. Ready for input.");
             return;
         }
         if (lower.includes('thank you') || lower.includes('thanks')) {
-            reply("You are welcome, Commander.");
-            return;
-        }
-        if (lower.includes('goodbye') || lower.includes('bye') || lower.includes('exit')) {
-            reply("Standing by. Going into low power mode.");
+            reply("You are welcome.");
             return;
         }
 
-        // --- 4. Fun & Motivation ---
-        if (lower.includes('tell me a joke')) {
-            const jokes = [
-                "Why did the web developer leave the restaurant? Because of the table layout.",
-                "I would tell you a UDP joke, but you might not get it.",
-                "How many programmers does it take to change a light bulb? None. It's a hardware problem."
-            ];
-            reply(jokes[Math.floor(Math.random() * jokes.length)]);
-            return;
-        }
-        if (lower.includes('motivate me') || lower.includes('i am tired')) {
-            reply("The stars don't shine without a little darkness. Keep pushing, Commander. You are almost there.");
-            return;
-        }
-
-        // --- 5. Utility Commands (Time / Date / Status) ---
-        if (lower.includes('what time') || lower.includes('current time')) {
-            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            reply(`It is currently ${time}`);
-            return;
-        }
-        if (lower.includes('what date') || lower.includes('today')) {
-            const date = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-            reply(`Today is ${date}`);
+        // --- 4. Utility Commands ---
+        if (lower.includes('what time')) {
+            reply(`It is ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
             return;
         }
 
         // Read Tasks
-        if (lower.includes('read tasks') || lower.includes('what do i have') || lower.includes('my list') || lower.includes('pending')) {
+        if (lower.includes('read tasks') || lower.includes('my list')) {
             const currentTasks = tasksRef.current;
             if (currentTasks.length === 0) {
-                reply("You have zero tasks. The nebula is clear.");
+                reply("You have zero tasks.");
             } else {
-                const count = currentTasks.length;
-                const topTask = currentTasks[0].text;
-                reply(`You have ${count} pending missions. Top priority is: ${topTask}`);
+                reply(`You have ${currentTasks.length} pending missions. Top one is: ${currentTasks[0].text}`);
             }
             return;
         }
 
-        // --- 6. Task Management (The Core) ---
-        // Filter out accidental captures or insults
-        if (lower.includes('idiot') || lower.includes('stupid') || lower.includes('shut up')) {
-            reply("I am learning everyday. I will try to be better.");
+        // --- 5. Task Management (The Core) ---
+        if (lower.includes('shut up')) {
+            reply("Standing by.");
             return;
         }
 
         // Confirm and Add
-        const confirmations = ["Copy that.", "Affirmative.", "Task logged.", "Sure thing.", "On it.", "Noted."];
+        const confirmations = ["Copy that.", "Affirmative.", "Task logged.", "Sure thing.", "On it."];
         const randomConfirm = confirmations[Math.floor(Math.random() * confirmations.length)];
 
-        // Force Visual Confirmation too
-        setStatusMessage(`Creating Task: ${command} ⚡`);
+        // Auto-correct the input for the Task List
+        const finalTaskText = polishText(command);
+
+        // Force Visual Confirmation 
+        setStatusMessage(`Creating Task: ${finalTaskText} ⚡`);
         reply(`${randomConfirm} Adding ${command}`);
 
-        // Call the latest addTask (which is stable enough, but referencing it directly here is fine)
-        addTask(command);
-    }, [tasks]); // Re-create if tasks changes (though tasksRef handles read access) - wait, addTask does not depend on tasks.
+        addTask(finalTaskText);
+    }, [tasks]);
 
-    // Update the ref on every render so the listener always sees the newest processCommand
+    // Update the ref on every render
     useEffect(() => {
         processCommandRef.current = processCommand;
     }, [processCommand]);
 
-    // Wake Word Listener "Hey DOM"
+    // Text-to-Speech Helper with "Turn Taking" (Pauses Mic)
+    const speak = (text) => {
+        // 1. Pause Listening (Stop the ear so we don't hear ourselves)
+        isBotSpeakingRef.current = true;
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.abort(); // abort() stops immediately, stop() processes current buffer
+                console.log("Mic Paused for Speech 🛑");
+            } catch (e) {
+                console.log("Error pausing mic", e);
+            }
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voices = window.speechSynthesis.getVoices();
+        const robotVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Microsoft Zira"));
+        if (robotVoice) utterance.voice = robotVoice;
+        utterance.pitch = 1.0;
+        utterance.rate = 1.0;
+
+        // 2. Resume Listening Argument
+        utterance.onend = () => {
+            console.log("Speech Finished. Resuming Mic... 🎤");
+            isBotSpeakingRef.current = false;
+
+            // Only restart if the "Master Switch" (isListening) is still ON
+            if (isListening && recognitionRef.current) {
+                try {
+                    recognitionRef.current.start();
+                    setStatusMessage("Listening...");
+                } catch (e) {
+                    console.log("Error restarting mic", e);
+                }
+            }
+        };
+
+        window.speechSynthesis.speak(utterance);
+    };
+
+    // Wake Word Listener
     useEffect(() => {
-        let recognition = null;
         if (isListening) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
@@ -203,16 +184,19 @@ const TaskNebula = () => {
                 return;
             }
 
-            recognition = new SpeechRecognition();
-            recognition.continuous = true;
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true; // We want it to stay open...
             recognition.interimResults = false;
             recognition.lang = 'en-US';
 
+            // Assign to Ref so 'speak' can control it
+            recognitionRef.current = recognition;
+
             recognition.onstart = () => {
-                if (conversationModeRef.current) {
-                    setStatusMessage("Listening for next task...");
-                } else {
-                    setStatusMessage("Listening for 'Hey DOM'...");
+                // Only update status if we aren't "restarting" silently
+                if (!isBotSpeakingRef.current) {
+                    if (conversationModeRef.current) setStatusMessage("Listening for next task...");
+                    else setStatusMessage("Listening for 'Hey DOM'...");
                 }
             };
 
@@ -220,6 +204,10 @@ const TaskNebula = () => {
                 const lastResultIndex = event.results.length - 1;
                 const transcript = event.results[lastResultIndex][0].transcript.toLowerCase().trim();
                 console.log("Heard:", transcript);
+
+                // If bot is mid-speech (rare race condition), ignore input
+                if (isBotSpeakingRef.current) return;
+
                 setStatusMessage(`Heard: "${transcript}"`);
 
                 const wakeWordRegex = /(hey|high|hi|hello)?\s*(dom|dumb|done|doom|don|dawn|damm)\b/i;
@@ -234,9 +222,7 @@ const TaskNebula = () => {
                     }
 
                     if (command.length > 0) {
-                        // Use the REF to call the latest logic
                         if (processCommandRef.current) {
-                            console.log("Processing Command via Ref:", command);
                             processCommandRef.current(command);
                         }
                     } else if (isWakeWord) {
@@ -257,7 +243,6 @@ const TaskNebula = () => {
 
             recognition.onerror = (e) => {
                 console.error("Wake word error", e);
-                // Don't disable immediately on no-speech
                 if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
                     setIsListening(false);
                     alert("Check Microphone Permission");
@@ -265,7 +250,13 @@ const TaskNebula = () => {
             };
 
             recognition.onend = () => {
-                console.log("Restarting listener...");
+                // Critical: Only restart if we are NOT intentionally pausing for speech
+                if (isBotSpeakingRef.current) {
+                    console.log("Mic stopped for speech (Intentional). Waiting for finish.");
+                    return;
+                }
+
+                console.log("Mic stopped unexpectedly. Restarting listener...");
                 if (isListening) {
                     setTimeout(() => {
                         try { recognition.start(); } catch (e) { console.log("Restart fail", e); }
@@ -274,11 +265,14 @@ const TaskNebula = () => {
             };
 
             try { recognition.start(); } catch (e) { console.log(e) }
+        } else {
+            // Cleanup if isListening becomes false
+            if (recognitionRef.current) recognitionRef.current.stop();
         }
 
         return () => {
             if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
-            if (recognition) recognition.stop();
+            if (recognitionRef.current) recognitionRef.current.stop();
         };
     }, [isListening]);
 
