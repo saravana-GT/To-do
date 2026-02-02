@@ -202,9 +202,14 @@ const TaskNebula = () => {
 
                 const wakeWordRegex = /(hey|high|hi|hello)?\s*(dom|dumb|done|doom|don|dawn|damm)\b/i;
                 const isWakeWord = wakeWordRegex.test(transcript);
+
+                // Allow "Implicit" commands if they start with strong verbs
+                const actionRegex = /^(add|create|remind|delete|remove|clear)\b/i;
+                const isActionCommand = actionRegex.test(transcript);
+
                 const isActive = conversationModeRef.current;
 
-                if (isActive || isWakeWord) {
+                if (isActive || isWakeWord || isActionCommand) {
                     let command = transcript;
 
                     if (isWakeWord) {
@@ -452,14 +457,23 @@ const TaskNebula = () => {
                     🎙️
                 </motion.button>
 
-                {/* Always-On Toggle Button */}
+                // Always-On Toggle Button
                 <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => {
                         if (!isListening) {
-                            // First time activation often requires a user gesture for audio context
-                            speak("Sentry mode activated.");
+                            // Activate Conversation Mode immediately so they don't have to say "Hey DOM" first
+                            conversationModeRef.current = true;
+                            speak("Sentry mode activated. Ready for commands.");
+                            // Set a timeout to revert to "Wait for Wake Word" mode after 10s of silence
+                            if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
+                            conversationTimeoutRef.current = setTimeout(() => {
+                                conversationModeRef.current = false;
+                                setStatusMessage("Standing By... (Say 'Hey DOM')");
+                            }, 10000);
+                        } else {
+                            speak("Sentry mode deactivated.");
                         }
                         setIsListening(!isListening);
                     }}
