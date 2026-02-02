@@ -365,6 +365,26 @@ const TaskNebula = () => {
                     padding: '50px',
                     gap: '40px'
                 }}>
+                    {/* Empty State */}
+                    {!loading && filteredTasks.length === 0 && (
+                        <div style={{
+                            textAlign: 'center',
+                            color: 'rgba(255,255,255,0.4)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '20px'
+                        }}>
+                            <div style={{ fontSize: '3rem' }}>🌌</div>
+                            <div>
+                                {searchTerm ? "No signals found for this frequency." : "Nebula Sector Clear. No Active Missions."}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', maxWidth: '300px' }}>
+                                Say "Hey DOM" to assign a task, or use the command line below.
+                            </div>
+                        </div>
+                    )}
+
                     {filteredTasks.map(task => (
                         <TaskBubble key={task.id} task={task} onComplete={handleComplete} />
                     ))}
