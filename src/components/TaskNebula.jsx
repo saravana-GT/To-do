@@ -53,6 +53,8 @@ const TaskNebula = () => {
     const recognitionRef = React.useRef(null);
     const isBotSpeakingRef = React.useRef(false);
     const isListeningRef = React.useRef(isListening);
+    const conversationModeRef = React.useRef(false);
+    const conversationTimeoutRef = React.useRef(null);
 
     // Sync isListening state to ref
     useEffect(() => {
