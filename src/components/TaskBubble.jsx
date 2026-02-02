@@ -14,7 +14,7 @@ const TaskBubble = ({ task, onComplete }) => {
     };
 
     const bubbleStyle = {
-        position: 'absolute',
+        position: 'relative',
         background: 'rgba(255, 255, 255, 0.1)',
         backdropFilter: 'blur(10px)',
         borderRadius: '50%',
