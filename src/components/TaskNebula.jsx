@@ -1,92 +1,25 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, serverTimestamp } from 'firebase/firestore'; // Removed limit for now
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import TaskBubble from './TaskBubble';
 import { debounce } from 'lodash';
 import { motion } from 'framer-motion';
+import { useTasks } from '../hooks/useTasks';
+import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
+import { polishText, getRandomConfirmation } from '../utils/textUtils';
 
 const TaskNebula = () => {
-    const [tasks, setTasks] = useState([]);
-    const [newTask, setNewTask] = useState('');
-    const [loading, setLoading] = useState(true);
+    const { tasks, loading, addTask: addTaskToStore, completeTask, tasksRef } = useTasks();
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
-    const [isListening, setIsListening] = useState(false);
-    const [statusMessage, setStatusMessage] = useState('');
+    const [newTask, setNewTask] = useState('');
 
-    const debouncedSearch = React.useMemo(
-        () => debounce((nextValue) => setDebouncedSearchTerm(nextValue), 300),
-        []
-    );
-
-    const handleSearchChange = (e) => {
-        const { value } = e.target;
-        setSearchTerm(value);
-        debouncedSearch(value);
-    };
-
-    // Request Notification Permission on load
-    useEffect(() => {
-        if ('Notification' in window && Notification.permission !== 'granted') {
-            Notification.requestPermission();
-        }
-    }, []);
-
-    // Real-time subscription to tasks
-    useEffect(() => {
-        const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const tasksData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            setTasks(tasksData);
-            setLoading(false);
-        });
-
-        return () => unsubscribe();
-    }, []);
-
-    // --- Ref Pattern for Fresh Logic Access ---
-    const processCommandRef = React.useRef(null);
-    const recognitionRef = React.useRef(null);
-    const isBotSpeakingRef = React.useRef(false);
-    const isListeningRef = React.useRef(isListening);
-    const conversationModeRef = React.useRef(false);
-    const conversationTimeoutRef = React.useRef(null);
-
-    // Sync isListening state to ref
-    useEffect(() => {
-        isListeningRef.current = isListening;
-    }, [isListening]);
-
-    // Keep tasks in a ref for callbacks
-    const tasksRef = React.useRef(tasks);
-    useEffect(() => {
-        tasksRef.current = tasks;
-    }, [tasks]);
-
-    // Auto-Correct / Polish Text Utility
-    const polishText = (text) => {
-        if (!text) return "";
-        // 1. Capitalize First Letter
-        let polished = text.charAt(0).toUpperCase() + text.slice(1);
-        // 2. Fix common "i" grammar
-        polished = polished.replace(/\bi\b/g, "I");
-        // 3. Trim
-        return polished.trim();
-    };
-
-    // Keep processCommand consistent
-    const processCommand = useCallback((command) => {
+    // Define the command handler (The "Brain" logic)
+    const handleCommand = useCallback((command, speak) => {
         const lower = command.toLowerCase();
 
-        // --- 1. Conversational Helper Function ---
-        const reply = (text) => {
-            speak(text);
-        };
+        // --- Conversational Helper ---
+        const reply = (text) => speak(text);
 
-        // --- 2. Identity & Personality ---
+        // --- Identity & Personality ---
         if (lower.includes('who are you') || lower.includes('your name')) {
             reply("I am DOM. Your Digital Operations Manager.");
             return;
@@ -96,7 +29,7 @@ const TaskNebula = () => {
             return;
         }
 
-        // --- 3. Small Talk ---
+        // --- Small Talk ---
         if (lower === 'hello' || lower === 'hi' || lower.includes('good morning')) {
             reply("Greetings, Commander. Ready for input.");
             return;
@@ -106,13 +39,13 @@ const TaskNebula = () => {
             return;
         }
 
-        // --- 4. Utility Commands ---
+        // --- Utility Commands ---
         if (lower.includes('what time')) {
             reply(`It is ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
             return;
         }
 
-        // Read Tasks
+        // --- Task Management ---
         if (lower.includes('read tasks') || lower.includes('my list')) {
             const currentTasks = tasksRef.current;
             if (currentTasks.length === 0) {
@@ -123,213 +56,50 @@ const TaskNebula = () => {
             return;
         }
 
-        // --- 5. Task Management (The Core) ---
         if (lower.includes('shut up')) {
             reply("Standing by.");
             return;
         }
 
-        // Confirm and Add
-        const confirmations = ["Copy that.", "Affirmative.", "Task logged.", "Sure thing.", "On it."];
-        const randomConfirm = confirmations[Math.floor(Math.random() * confirmations.length)];
-
-        // Auto-correct the input for the Task List
+        // Confirm and Add Task
         const finalTaskText = polishText(command);
+        const randomConfirm = getRandomConfirmation();
 
-        // Force Visual Confirmation 
-        setStatusMessage(`Creating Task: ${finalTaskText} ⚡`);
         reply(`${randomConfirm} Adding ${command}`);
+        addTaskToStore(finalTaskText);
 
-        addTask(finalTaskText);
-    }, [speak, addTask]);
+    }, [addTaskToStore, tasksRef]); // Dependencies remain stable
 
-    // Update the ref on every render
+    // Initialize Voice Assistant
+    const { isListening, setIsListening, speak, statusMessage, activateConversation } = useVoiceAssistant({
+        onCommand: handleCommand
+    });
+
+    // Request Notification Permission
     useEffect(() => {
-        processCommandRef.current = processCommand;
-    }, [processCommand]);
-
-    // Text-to-Speech Helper with "Soft Mute" (Keeps Mic Open but Ignores Input)
-    const speak = useCallback((text) => {
-        // 1. Mark as speaking so we ignore our own voice
-        isBotSpeakingRef.current = true;
-
-        const utterance = new SpeechSynthesisUtterance(text);
-        const voices = window.speechSynthesis.getVoices();
-        const robotVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Microsoft Zira"));
-        if (robotVoice) utterance.voice = robotVoice;
-        utterance.pitch = 1.0;
-        utterance.rate = 1.0;
-
-        // 2. Unmute after speaking
-        utterance.onend = () => {
-            // Small delay to ensure we don't catch the tail of the echo
-            setTimeout(() => {
-                isBotSpeakingRef.current = false;
-            }, 500);
-        };
-
-        window.speechSynthesis.speak(utterance);
+        if ('Notification' in window && Notification.permission !== 'granted') {
+            Notification.requestPermission();
+        }
     }, []);
 
-    // Wake Word Listener
-    useEffect(() => {
-        if (isListening) {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SpeechRecognition) {
-                alert("Browser not supported");
-                setIsListening(false);
-                return;
-            }
+    // Search Logic
+    const debouncedSearch = useMemo(
+        () => debounce((nextValue) => setDebouncedSearchTerm(nextValue), 300),
+        []
+    );
 
-            const recognition = new SpeechRecognition();
-            recognition.continuous = true; // We want it to stay open...
-            recognition.interimResults = false;
-            recognition.lang = 'en-US';
-
-            // Assign to Ref so 'speak' can control it
-            recognitionRef.current = recognition;
-
-            recognition.onstart = () => {
-                setStatusMessage("Listening... (Say 'Hey DOM')");
-            };
-
-            recognition.onresult = (event) => {
-                // If robot is speaking, IGNORE everything (Soft Mute)
-                if (isBotSpeakingRef.current) {
-                    console.log("Ignored input while speaking...");
-                    return;
-                }
-
-                const lastResultIndex = event.results.length - 1;
-                const transcript = event.results[lastResultIndex][0].transcript.toLowerCase().trim();
-                console.log("Heard:", transcript);
-                setStatusMessage(`Heard: "${transcript}"`);
-
-                const wakeWordRegex = /(hey|high|hi|hello)?\s*(dom|dumb|done|doom|don|dawn|damm|dome)\b/i;
-                const isWakeWord = wakeWordRegex.test(transcript);
-
-                // Allow "Implicit" commands if they start with strong verbs
-                const actionRegex = /^(add|create|remind|delete|remove|clear)\b/i;
-                const isActionCommand = actionRegex.test(transcript);
-
-                const isActive = conversationModeRef.current;
-
-                if (isActive || isWakeWord || isActionCommand) {
-                    let command = transcript;
-
-                    // Always clean the wake word if it exists, even if we are already active
-                    if (wakeWordRegex.test(command)) {
-                        command = command.replace(wakeWordRegex, '').trim();
-                    }
-
-                    if (command.length > 0) {
-                        if (processCommandRef.current) {
-                            processCommandRef.current(command);
-                        }
-                    } else if (isWakeWord) {
-                        speak("Yes Commander?");
-                        setStatusMessage("Listening (Active)...");
-                    }
-
-                    // Refresh Conversation Mode
-                    conversationModeRef.current = true;
-                    if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
-                    conversationTimeoutRef.current = setTimeout(() => {
-                        conversationModeRef.current = false;
-                        setStatusMessage("Standing By... (Say 'Hey DOM')");
-                    }, 8000);
-                }
-            };
-
-            recognition.onerror = (e) => {
-                console.error("Wake word error", e);
-                if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-                    setIsListening(false);
-                    // Don't alert repeatedly
-                }
-            };
-
-            recognition.onend = () => {
-                console.log("Mic stopped. Restarting...");
-                // Always restart if Global "isListening" is true (using Ref)
-                if (isListeningRef.current) {
-                    setTimeout(() => {
-                        try { recognition.start(); } catch (e) { console.log("Restart fail", e); }
-                    }, 200);
-                }
-            };
-
-            try { recognition.start(); } catch (e) { console.log(e) }
-        } else {
-            // Cleanup if isListening becomes false
-            if (recognitionRef.current) recognitionRef.current.stop();
-        }
-
-        return () => {
-            if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
-            if (recognitionRef.current) recognitionRef.current.stop();
-        };
-    }, [isListening, speak]);
-
-    const scheduleNotification = (text, date) => {
-        const timeUntil = date.getTime() - new Date().getTime();
-        if (timeUntil > 0) {
-            setTimeout(() => {
-                if (Notification.permission === 'granted') {
-                    new Notification("Nebula Alert! 🌠", {
-                        body: `Identify Signal: ${text}`,
-                        icon: '/pwa-192x192.png'
-                    });
-                } else {
-                    alert(`Nebula Alert: ${text}`);
-                }
-            }, timeUntil);
-            console.log(`Notification scheduled for ${text} in ${timeUntil}ms`);
-        }
+    const handleSearchChange = (e) => {
+        const { value } = e.target;
+        setSearchTerm(value);
+        debouncedSearch(value);
     };
 
-    const addTask = useCallback(async (textOverride = null) => {
-        const textToUse = typeof textOverride === 'string' ? textOverride : newTask;
-        if (!textToUse.trim()) return;
-
-        // Parse Date from text using basic logic or advanced chrono if needed
-        let scheduledTime = null;
-        let taskText = textToUse;
-
-        try {
-            const chrono = await import('chrono-node');
-            const parsed = chrono.parse(textToUse);
-            if (parsed.length > 0) {
-                scheduledTime = parsed[0].start.date();
-            }
-        } catch (e) {
-            console.log("Date parsing skipped", e);
-        }
-
-        if (scheduledTime) {
-            scheduleNotification(taskText, scheduledTime);
-        }
-
-        try {
-            await addDoc(collection(db, "tasks"), {
-                text: taskText,
-                createdAt: serverTimestamp(),
-                completed: false,
-                scheduledFor: scheduledTime ? scheduledTime.toISOString() : null
-            });
+    const handleAddTask = async () => {
+        const success = await addTaskToStore(newTask);
+        if (success) {
             setNewTask('');
             setSearchTerm('');
             setDebouncedSearchTerm('');
-        } catch (error) {
-            console.error("Error adding task: ", error);
-        }
-    }, [newTask]);
-
-    const handleComplete = async (id) => {
-        try {
-            await deleteDoc(doc(db, "tasks", id));
-        } catch (error) {
-            console.error("Error deleting task", error);
         }
     };
 
@@ -361,7 +131,6 @@ const TaskNebula = () => {
                     border: '1px solid #00ffcc', zIndex: 5,
                     display: 'flex', alignItems: 'center', gap: '8px'
                 }}>
-                    {/* Flashing Dot if Active */}
                     {statusMessage.includes("Active") ? (
                         <span style={{ fontSize: '10px', color: 'red' }}>🔴 REC</span>
                     ) : "⚡"}
@@ -376,7 +145,8 @@ const TaskNebula = () => {
                     alignItems: 'center',
                     height: '100%',
                     padding: '50px',
-                    gap: '40px'
+                    gap: '40px',
+                    alignContent: 'center'
                 }}>
                     {/* Empty State */}
                     {!loading && filteredTasks.length === 0 && (
@@ -399,7 +169,7 @@ const TaskNebula = () => {
                     )}
 
                     {filteredTasks.map(task => (
-                        <TaskBubble key={task.id} task={task} onComplete={handleComplete} />
+                        <TaskBubble key={task.id} task={task} onComplete={completeTask} />
                     ))}
                 </div>
             </div>
@@ -411,7 +181,7 @@ const TaskNebula = () => {
                     placeholder="New Mission Objective... (or use Mic)"
                     value={newTask}
                     onChange={(e) => setNewTask(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && addTask()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
                     style={inputStyle}
                 />
 
@@ -420,6 +190,7 @@ const TaskNebula = () => {
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => {
+                        // Quick Voice Input (One-shot)
                         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                         if (!SpeechRecognition) {
                             alert("Voice features not supported in this browser. Try Chrome!");
@@ -432,17 +203,12 @@ const TaskNebula = () => {
 
                         recognition.onresult = (event) => {
                             const transcript = event.results[0][0].transcript;
-                            setStatusMessage(`Heard: "${transcript}"`);
                             setNewTask(transcript);
                             speak(`Adding ${transcript}`);
-
                             setTimeout(() => {
-                                addTask(transcript);
-                            }, 500); // Slight delay to let user see the text and hear confirmation
-                        };
-
-                        recognition.onerror = (event) => {
-                            console.error("Speech recognition error", event.error);
+                                addTaskToStore(transcript);
+                                setNewTask('');
+                            }, 500);
                         };
                     }}
                     style={{
@@ -463,25 +229,19 @@ const TaskNebula = () => {
                     🎙️
                 </motion.button>
 
-                // Always-On Toggle Button
+                {/* Always-On Toggle Button */}
                 <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => {
                         if (!isListening) {
-                            // Activate Conversation Mode immediately so they don't have to say "Hey DOM" first
-                            conversationModeRef.current = true;
+                            setIsListening(true);
+                            activateConversation();
                             speak("Hey prabuu..");
-                            // Set a timeout to revert to "Wait for Wake Word" mode after 10s of silence
-                            if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
-                            conversationTimeoutRef.current = setTimeout(() => {
-                                conversationModeRef.current = false;
-                                setStatusMessage("Standing By... (Say 'Hey DOM')");
-                            }, 10000);
                         } else {
                             speak("Sentry mode deactivated.");
+                            setIsListening(false);
                         }
-                        setIsListening(!isListening);
                     }}
                     style={{
                         background: isListening ? '#00ffcc' : 'rgba(255, 255, 255, 0.1)',
@@ -505,7 +265,7 @@ const TaskNebula = () => {
                 <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
-                    onClick={addTask}
+                    onClick={handleAddTask}
                     style={buttonStyle}
                 >
                     Launch
