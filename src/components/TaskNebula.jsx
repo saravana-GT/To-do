@@ -12,11 +12,10 @@ const TaskNebula = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [isListening, setIsListening] = useState(false);
-    const [listeningForCommand, setListeningForCommand] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
 
-    const debouncedSearch = useCallback(
-        debounce((nextValue) => setDebouncedSearchTerm(nextValue), 300),
+    const debouncedSearch = React.useMemo(
+        () => debounce((nextValue) => setDebouncedSearchTerm(nextValue), 300),
         []
     );
 
@@ -60,6 +59,12 @@ const TaskNebula = () => {
     useEffect(() => {
         isListeningRef.current = isListening;
     }, [isListening]);
+
+    // Keep tasks in a ref for callbacks
+    const tasksRef = React.useRef(tasks);
+    useEffect(() => {
+        tasksRef.current = tasks;
+    }, [tasks]);
 
     // Auto-Correct / Polish Text Utility
     const polishText = (text) => {
@@ -136,7 +141,7 @@ const TaskNebula = () => {
         reply(`${randomConfirm} Adding ${command}`);
 
         addTask(finalTaskText);
-    }, [tasks]);
+    }, [speak, addTask]);
 
     // Update the ref on every render
     useEffect(() => {
@@ -144,7 +149,7 @@ const TaskNebula = () => {
     }, [processCommand]);
 
     // Text-to-Speech Helper with "Soft Mute" (Keeps Mic Open but Ignores Input)
-    const speak = (text) => {
+    const speak = useCallback((text) => {
         // 1. Mark as speaking so we ignore our own voice
         isBotSpeakingRef.current = true;
 
@@ -164,7 +169,7 @@ const TaskNebula = () => {
         };
 
         window.speechSynthesis.speak(utterance);
-    };
+    }, []);
 
     // Wake Word Listener
     useEffect(() => {
@@ -264,7 +269,7 @@ const TaskNebula = () => {
             if (conversationTimeoutRef.current) clearTimeout(conversationTimeoutRef.current);
             if (recognitionRef.current) recognitionRef.current.stop();
         };
-    }, [isListening]);
+    }, [isListening, speak]);
 
     const scheduleNotification = (text, date) => {
         const timeUntil = date.getTime() - new Date().getTime();
@@ -283,7 +288,7 @@ const TaskNebula = () => {
         }
     };
 
-    const addTask = async (textOverride = null) => {
+    const addTask = useCallback(async (textOverride = null) => {
         const textToUse = typeof textOverride === 'string' ? textOverride : newTask;
         if (!textToUse.trim()) return;
 
@@ -318,7 +323,7 @@ const TaskNebula = () => {
         } catch (error) {
             console.error("Error adding task: ", error);
         }
-    };
+    }, [newTask]);
 
     const handleComplete = async (id) => {
         try {
@@ -357,7 +362,7 @@ const TaskNebula = () => {
                     display: 'flex', alignItems: 'center', gap: '8px'
                 }}>
                     {/* Flashing Dot if Active */}
-                    {listeningForCommand || statusMessage.includes("Active") ? (
+                    {statusMessage.includes("Active") ? (
                         <span style={{ fontSize: '10px', color: 'red' }}>🔴 REC</span>
                     ) : "⚡"}
                     {statusMessage || "Sentry Mode Active"}

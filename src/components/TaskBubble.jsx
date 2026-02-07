@@ -13,6 +13,27 @@ const TaskBubble = ({ task, onComplete }) => {
         setTimeout(() => onComplete(task.id), 800); // Wait for animation
     };
 
+    const formatTime = (timestamp) => {
+        if (!timestamp) return '';
+        // Handle Firestore Timestamp or Date object
+        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+        // Check if date is valid
+        if (isNaN(date.getTime())) return '';
+
+        const now = new Date();
+        const isToday = date.getDate() === now.getDate() &&
+            date.getMonth() === now.getMonth() &&
+            date.getFullYear() === now.getFullYear();
+
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        if (isToday) {
+            return timeStr;
+        } else {
+            return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
+        }
+    };
+
     const bubbleStyle = {
         position: 'relative',
         background: 'rgba(255, 255, 255, 0.1)',
@@ -20,6 +41,7 @@ const TaskBubble = ({ task, onComplete }) => {
         borderRadius: '50%',
         padding: '20px',
         display: 'flex',
+        flexDirection: 'column', // Stack text and time vertically
         alignItems: 'center',
         justifyContent: 'center',
         color: '#fff',
@@ -64,7 +86,12 @@ const TaskBubble = ({ task, onComplete }) => {
                     whileHover={{ scale: 1.1, boxShadow: '0 0 25px rgba(100, 200, 255, 0.6)' }}
                     layout
                 >
-                    {task.text}
+                    <div style={{ marginBottom: '5px' }}>{task.text}</div>
+                    {task.createdAt && (
+                        <div style={{ fontSize: '0.65rem', opacity: 0.7 }}>
+                            {formatTime(task.createdAt)}
+                        </div>
+                    )}
                 </motion.div>
             ) : (
                 <motion.div
