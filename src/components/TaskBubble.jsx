@@ -1,6 +1,27 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const formatTime = (timestamp) => {
+    if (!timestamp) return '';
+    // Handle Firestore Timestamp or Date object
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    // Check if date is valid
+    if (isNaN(date.getTime())) return '';
+
+    const now = new Date();
+    const isToday = date.getDate() === now.getDate() &&
+        date.getMonth() === now.getMonth() &&
+        date.getFullYear() === now.getFullYear();
+
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (isToday) {
+        return timeStr;
+    } else {
+        return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
+    }
+};
+
 const TaskBubble = ({ task, onComplete }) => {
     const [isExploding, setIsExploding] = useState(false);
 
@@ -11,27 +32,6 @@ const TaskBubble = ({ task, onComplete }) => {
     const handleComplete = () => {
         setIsExploding(true);
         setTimeout(() => onComplete(task.id), 800); // Wait for animation
-    };
-
-    const formatTime = (timestamp) => {
-        if (!timestamp) return '';
-        // Handle Firestore Timestamp or Date object
-        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-        // Check if date is valid
-        if (isNaN(date.getTime())) return '';
-
-        const now = new Date();
-        const isToday = date.getDate() === now.getDate() &&
-            date.getMonth() === now.getMonth() &&
-            date.getFullYear() === now.getFullYear();
-
-        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-        if (isToday) {
-            return timeStr;
-        } else {
-            return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
-        }
     };
 
     const bubbleStyle = {
